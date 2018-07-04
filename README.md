@@ -66,6 +66,7 @@ You'll need to enable the camera before testing it out. Again with SSH on the Ra
 	```
 	sudo raspi-config
 	```
+	
 	1. Select **Interfacing Options**,
 	2. Select **Camera**, 
 	3. Then **Yes** for enabling the camera
@@ -92,6 +93,17 @@ Otherwise, you can simply run it on the terminal's process with
 ```
 python webcam.py
 ```
+
+#### 13. Auto Start
+Since the script will now be run by root, we need to make sure that root has access to the python packages. So install telepot for this
+```
+sudo pip install telepot
+```
+Modify /etc/rc.local before the **exit 0** to run the python script with telepot
+```
+sudo -H -u pi /usr/bin/python /home/piwebcam.py
+```
+
 
 ## Authors
 

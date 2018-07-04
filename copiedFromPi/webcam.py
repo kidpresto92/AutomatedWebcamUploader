@@ -6,14 +6,16 @@ from picamera import PiCamera
 from shutil import copyfile
 import subprocess
 from time import sleep
+import urllib2
 
 #Gloabl Variables
 
 CIVIL_ZENITH = 90.83333 # civil
 
-camera = PiCamera()
-camera.resolution = (2560,1920) #5mp
-timelapseFolder = "/home/pi/webcam/timelapse/"
+nelsons_latitude=43.754906
+nelsons_longitude=-74.792906
+localOffset=-5
+
 localPicturePath = '/home/pi/picture.jpg'
 
 serverIP = '192.168.0.11'
@@ -25,7 +27,7 @@ server = ftplib.FTP();
 server.connect(serverIP, serverPort);
 server.login(serverUsername,serverPassword);
 
-intervalInSeconds = 30
+intervalInSeconds = 120
 timingBufferInSeconds = 1800
 
 class SunriseSunset(object):
@@ -132,14 +134,14 @@ class SunriseSunset(object):
         return rise_dt, set_dt
 
 
-
 def scheduleNextCapture():
     now = datetime.datetime.now()
     rise_obj = SunriseSunset(dt=now,
-                            latitude=42.880230,
-                            longitude=-78.878738, 
-                            localOffset=-5,
+                            latitude=nelsons_latitude,
+                            longitude=nelsons_longitude, 
+                            localOffset=localOffset,
                             zenith=CIVIL_ZENITH)
+
     sunrise, sunset = rise_obj.calculate()
 
     sunrise = sunrise + datetime.timedelta(0, -timingBufferInSeconds)
@@ -149,13 +151,14 @@ def scheduleNextCapture():
     if(now < sunrise):  
         nextCapture = now + datetime.timedelta(0, intervalInSeconds)
         scheduleCapture(nextCapture)
+
     # After sunset, schedule to start before tomorrow's sunrise
     elif(now > sunset):
         tomrorow = now + datetime.timedelta(1)
-        rise_obj = SunriseSunset(dt=tomrorow,
-                            latitude=42.880230,
-                            longitude=-78.878738, 
-                            localOffset=-5,
+        rise_obj = SunriseSunset(dt=tomorrow,
+                            latitude=nelsons_latitude,
+                            longitude=nelsons_longitude, 
+                            localOffset=localOffset,
                             zenith=CIVIL_ZENITH)
 
         nextCapture = getTomorrowsCaptureStart()
@@ -167,10 +170,13 @@ def scheduleNextCapture():
         scheduleCapture(nextCapture)
 
 def takePicture():
+    camera = PiCamera()
+    camera.resolution = (2560,1920) #5mp
     camera.start_preview()
     sleep(5)
     camera.capture(localPicturePath)
     camera.stop_preview()
+    camera.close()
 
 def sendPicture():
     photo = open(localPicturePath, 'rb')
@@ -184,94 +190,51 @@ def getTomorrowsCaptureStart():
     tomorrow =  now = datetime.datetime.now() + datetime.timedelta(1)
 
     rise_obj = SunriseSunset(dt=tomorrow,
-                        latitude=42.880230,
-                        longitude=-78.878738, 
-                        localOffset=-5,
+                        latitude=nelsons_latitude,
+                        longitude=-nelsons_longitude, 
+                        localOffset=localOffset,
                         zenith=CIVIL_ZENITH)
 
     sunrise, sunset = rise_obj.calculate()
     return sunrise + datetime.timedelta(0, -timingBufferInSeconds)
 
-def getFolderName(date):
-    directory = timelapseFolder + date.strftime("%Y%m%d") + "/"
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    return directory
-
-def getTimelapsePhotoName(date):
-    folder = getFolderName(date)
-    path, dirs, files = next(os.walk(folder))
-    
-    return folder + "pic-" + "%04d" % (len(files)) + ".jpg"
-
-def getTimelapseFileName(date):
-    folder = getFolderName(date)
-    path, dirs, files = next(os.walk(folder))
-    
-    return folder + "timelapse.mp4"
-
-def createTimeLapseVideo(date):
-    outputFile =  getTimelapseFileName(date)
-
-    if(not os.path.isfile(outputFile)):
-
-        photoFormat = getFolderName(date) + "pic-%04d.jpg"
-
-        command = "ffmpeg -i " + photoFormat + " " + outputFile
-        
-        os.system(command)
-
-
-def copyPictureToTimelapse():
-    filename = getTimelapsePhotoName(datetime.datetime.now())
-    copyfile(localPicturePath, filename)
-
 def scheduleCapture(date):
     print("Next capture scheduled for " + date.strftime("%Y-%m-%d %H:%M"))
     delay = (date - datetime.datetime.now()).total_seconds()
     sleep(delay)
-    execute();
+    
+    os.system("sh /home/pi/run.sh")
+    exit(0)
+
+def networkActive():
+    try:
+        urllib2.urlopen('http://216.58.192.142', timeout=5)
+        return True
+    except urllib2.URLError as err: 
+        return False    
 
 def execute():
     now = datetime.datetime.now()
     rise_obj = SunriseSunset(dt=now,
-                            latitude=42.880230,
-                            longitude=-78.878738, 
-                            localOffset=-5,
+                            latitude=nelsons_latitude,
+                            longitude=nelsons_longitude, 
+                            localOffset=localOffset,
                             zenith=CIVIL_ZENITH)
+
     sunrise, sunset = rise_obj.calculate()
 
     sunrise = sunrise + datetime.timedelta(0, -timingBufferInSeconds)
     sunset = sunset + datetime.timedelta(0, timingBufferInSeconds)
 
-    print("scheduleNextCapture:now-" + now.strftime("%Y-%m-%d %H:%M"))
-    print("scheduleNextCapture:sunrise-" + sunrise.strftime("%Y-%m-%d %H:%M"))
-    print("scheduleNextCapture:sunset-" + sunset.strftime("%Y-%m-%d %H:%M"))
+    print(now.strftime("%Y-%m-%d %H:%M") + "-execute")
 
+    if(networkActive()):
+        if(sunrise < now and now < sunset):
+            takePicture()
 
-    if(sunrise < now and now < sunset):
-        takePicture()
-
-        sendPicture()
-
-        copyPictureToTimelapse()
-
-    # elif(sunset < now):
-    #     createTimeLapseVideo(now);
-
-    # elif(now < sunset):
-    #     yesterday = now.timedelta(-1)
-    #     createTimeLapseVideo(yesterday)
-    
-    scheduleNextCapture()
-
-#For testing purposes only:
-# for x in range(100):
-
-#     takePicture()
-
-#     sendPicture()
-
-#     copyPictureToTimelapse()
+            sendPicture()
+        scheduleNextCapture()
+    else:
+        scheduleCapture(now.timedelta(0, 30))
 
 execute();
